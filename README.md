@@ -2,9 +2,9 @@
 
 ## Installing the PyPI package
 
-The ``big_g`` package is available on PyPI.
+The ``big-g`` package is available on PyPI.
 
-    pip install big_g
+    pip install big-g
 
 Installing via ``pip`` should get most of the Python dependencies you need.
 OpenCV installation can sometimes be tricky, so this may need to be installed
