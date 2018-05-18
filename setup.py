@@ -28,7 +28,7 @@ setup(
         'matplotlib',
         'opencv-contrib-python'],
     entry_points={'console_scripts': [
-        'big_g_tracking = object_tracking.object_tracking:tracking']},
+        'big-g-tracking = object_tracking.object_tracking:tracking']},
     version=object_tracking.__version__,
     author_email='paul.freeman.cs@gmail.com'
     )

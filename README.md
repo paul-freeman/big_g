@@ -14,6 +14,6 @@ manually before big\_g will operate correctly.
 
 To run the big\_g program, simply run:
 
-    big_g_tracking
+    big-g-tracking
 
-Help can be found by running `big_g_tracking --help`.
+Help can be found by running `big-g-tracking --help`.

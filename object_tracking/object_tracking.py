@@ -4,10 +4,11 @@ import argparse
 from math import sqrt
 import matplotlib
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import axes3d # pylint: disable=unused-import
 import numpy as np
 import cv2
 
-__version_info__ = (1, 0, 2)
+__version_info__ = (1, 0, 3)
 __version__ = '.'.join([str(n) for n in __version_info__])
 
 LICENSE_MSG = """\
@@ -17,8 +18,7 @@ Copyright (c) 2018 Paul Freeman"""
 
 # global constants
 ESCAPE_KEY = 27
-PLOT_TITLE = 'Tracked Object Motion'
-PLOT_XLABEL = 'Time [seconds]'
+PLOT_XLABEL = 'Distance [metres]'
 PLOT_YLABEL = 'Distance [metres]'
 
 def tracking():
@@ -55,15 +55,27 @@ def tracking():
                 print(TRACKING_MSG_W_PLOT)
             press_enter()
             print('<object tracking window displayed>')
-            points = track_video(video, tracker, bbox, scale, args.suppress_live_plot, args.algorithm)
+            speed_up = 1
+            if args.speed_up:
+                speed_up = int(args.speed_up[:-1])
+            points = track_video(video, tracker, bbox, scale, args.suppress_live_plot, args.algorithm, speed_up)
             np.save(output_file, np.asarray(points))
             print(LAST_PLOT_MSG)
             press_enter()
-            plt.cla()
-            plt.scatter(points.T[0], points.T[1])
-            plt.title(PLOT_TITLE)
-            plt.xlabel(PLOT_XLABEL)
-            plt.ylabel(PLOT_YLABEL)
+            fig = plt.figure()
+            axes = fig.gca(projection='3d')
+            axes.plot(points.T[1], points.T[2], zs=points.T[0])
+            axes.set_title('Tracked object motion')
+            axes.set_aspect('equal')
+            xmin, xmax = axes.get_xlim()
+            x_range = abs(xmin-xmax)
+            ymin, ymax = axes.get_ylim()
+            y_range = abs(ymin-ymax)
+            half_diff = abs(x_range-y_range) / 2
+            if x_range > y_range:
+                axes.set_ylim(ymin-half_diff, ymax+half_diff)
+            if y_range > x_range:
+                axes.set_xlim(xmin-half_diff, xmax+half_diff)
             plt.show()
     except FileExistsError:
         print('This directory already contains a file named: {}'.format(args.output_file))
@@ -81,15 +93,17 @@ def read_frame(video):
 
 def get_scale_distance():
     """Calculates the scale from a drawn line on the video"""
-    cv2.namedWindow('scale')
-    cv2.setMouseCallback('scale', draw_line)
-    while True:
-        cv2.imshow('scale', COPY)
-        k = cv2.waitKey(1) & 0xFF
-        if k == ord('\n') or k == ord('\r'):
-            break
-    cv2.destroyWindow('scale')
-    return sqrt((X_VAL_2-X_VAL_1)**2 + (Y_VAL_2-Y_VAL_1)**2)
+    try:
+        cv2.namedWindow('scale')
+        cv2.setMouseCallback('scale', draw_line)
+        while True:
+            cv2.imshow('scale', COPY)
+            k = cv2.waitKey(1) & 0xFF
+            if k == ord('\n') or k == ord('\r'):
+                break
+        return sqrt((X_VAL_2-X_VAL_1)**2 + (Y_VAL_2-Y_VAL_1)**2)
+    finally:
+        cv2.destroyWindow('scale')
 
 
 def select_bounding_box():
@@ -100,27 +114,33 @@ def select_bounding_box():
         cv2.destroyAllWindows()
 
 
-def track_video(video, tracker, bbox, scale, suppress_live_plot, algorithm):
+def track_video(video, tracker, bbox, scale, suppress_live_plot, algorithm, speed):
     """Track a video"""
     fps = video.get(cv2.CAP_PROP_FPS)
+    height, width, _ = FRAME.shape
     if not tracker.init(FRAME, bbox):
         raise RuntimeError('Could not initialize video file')
-    origin = ((2.0 * bbox[0] + bbox[2]) / 2.0,
-              (2.0 * bbox[1] + bbox[3]) / 2.0)
     frame_number = 0
+    scaled_bbox = [n / scale for n in bbox]
+    x_origin = (2.0 * scaled_bbox[0] + scaled_bbox[2]) / 2.0
+    y_origin = (2.0 * scaled_bbox[1] + scaled_bbox[3]) / 2.0
     time_points = [frame_number / fps]
-    dist_points = [0]
+    x_points = [x_origin]
+    y_points = [y_origin]
     if not suppress_live_plot:
         plt.ion()
-        plt.scatter(time_points, dist_points)
-        plt.title(PLOT_TITLE)
-        plt.xlabel(PLOT_XLABEL)
-        plt.ylabel(PLOT_YLABEL)
+        fig, axes = plt.subplots(1, 1)
+        axes.imshow(FRAME)
+        axes.plot(x_points, y_points)
+        axes.set_title('Elapsed time: {:d} seconds'.format(int(time_points[-1])))
+        axes.set_xlabel(PLOT_XLABEL)
+        axes.set_ylabel(PLOT_YLABEL)
         plt.show()
     while True:
         try:
-            read_frame(video)
-            frame_number += 1
+            for _ in range(speed):
+                read_frame(video)
+                frame_number += 1
         except RuntimeError:
             break
         tracking_success, bbox = tracker.update(FRAME)
@@ -136,29 +156,44 @@ def track_video(video, tracker, bbox, scale, suppress_live_plot, algorithm):
                 raise ValueError('Unknown algorithm type')
             bbox = select_bounding_box()
             tracker.init(FRAME, bbox)
-        corner1 = int(bbox[0]), int(bbox[1])
-        corner2 = int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3])
-        distance = sqrt((((2.0 * bbox[0] + bbox[2]) / 2.0) - origin[0])**2
-                        + (((2.0 * bbox[1] + bbox[3]) / 2.0) - origin[1])**2)
+        scaled_bbox = [n / scale for n in bbox]
+        #distance = sqrt((((2.0 * scaled_bbox[0] + scaled_bbox[2]) / 2.0) - x_origin)**2
+        #                + (((2.0 * scaled_bbox[1] + scaled_bbox[3]) / 2.0) - y_origin)**2)
         time_points.append(frame_number / fps)
-        dist_points.append(distance / scale)
+        x_points.append((2.0 * scaled_bbox[0] + scaled_bbox[2]) / 2.0)
+        y_points.append((2.0 * scaled_bbox[1] + scaled_bbox[3]) / 2.0)
         if not suppress_live_plot:
-            plt.cla()
-            plt.scatter(time_points, dist_points)
-            plt.title(PLOT_TITLE)
-            plt.xlabel(PLOT_XLABEL)
-            plt.ylabel(PLOT_YLABEL)
+            axes.clear()
+            axes.imshow(cv2.cvtColor(FRAME, cv2.COLOR_BGR2RGB), extent=[0, width/scale, height/scale, 0])
+            axes.plot([x * (time_points[i] / time_points[-1]) for i, x in enumerate(x_points)],
+                      y_points,
+                      color='red', alpha=0.3)
+            axes.plot(x_points,
+                      [y * (time_points[i] / time_points[-1]) for i, y in enumerate(y_points)],
+                      color='yellow', alpha=0.3)
+            axes.plot([x * (time_points[i] / time_points[-1]) for i, x in enumerate(x_points)],
+                      [y * (time_points[i] / time_points[-1]) for i, y in enumerate(y_points)],
+                      color='green', alpha=0.5)
+            axes.plot([scaled_bbox[0],
+                       scaled_bbox[0]+scaled_bbox[2],
+                       scaled_bbox[0]+scaled_bbox[2],
+                       scaled_bbox[0],
+                       scaled_bbox[0]],
+                      [scaled_bbox[1],
+                       scaled_bbox[1],
+                       scaled_bbox[1]+scaled_bbox[3],
+                       scaled_bbox[1]+scaled_bbox[3],
+                       scaled_bbox[1]],
+                      color='white', alpha=0.3)
+            axes.set_title('Elapsed time: {:d} seconds'.format(int(time_points[-1])))
+            axes.set_xlabel(PLOT_XLABEL)
+            axes.set_ylabel(PLOT_YLABEL)
+            axes.set_ylim(height/scale, 0)
             plt.pause(0.001)
-        cv2.rectangle(FRAME, corner1, corner2, (255, 0, 0), 2, 1)
-        cv2.imshow("Tracking", FRAME)
-        key_press = cv2.waitKey(1) & 0xff
-        if key_press == ESCAPE_KEY:
-            break
     if not suppress_live_plot:
         plt.close()
         plt.ioff()
-    cv2.destroyAllWindows()
-    return np.array([time_points, dist_points]).T
+    return np.array([time_points, x_points, y_points]).T
 
 
 def open_video(filepath):
@@ -211,6 +246,10 @@ def parse_args():
         '--suppress_live_plot',
         action='store_true',
         help='suppress real-time plot of the tracked position')
+    parser.add_argument(
+        '-x', '--speed_up',
+        help='speed up processing by skipping frames',
+        choices=['2x', '4x', '8x', '16x', '32x', '64x'])
     return parser.parse_args()
 
 
